@@ -1,0 +1,79 @@
+{% extends "base.html" %}
+
+{% block title %}Print to {{ printer.name }} - ippweb{% endblock %}
+
+{% block content %}
+<article>
+    <header>
+        <h1>Print to {{ printer.name }}</h1>
+    </header>
+
+    <section class="printer-info">
+        <dl>
+            <dt>Model</dt>
+            <dd>{{ printer.make_and_model or 'Unknown' }}</dd>
+            <dt>Location</dt>
+            <dd>{{ printer.location or '-' }}</dd>
+            <dt>Status</dt>
+            <dd>{{ printer.state_text }}</dd>
+        </dl>
+    </section>
+
+    <form method="POST" enctype="multipart/form-data">
+        <fieldset>
+            <legend>File</legend>
+            <label for="file">
+                PDF Document
+                <input type="file" id="file" name="file" accept=".pdf,application/pdf" required>
+                <small>Maximum file size: 50 MB. Only PDF files are supported.</small>
+            </label>
+        </fieldset>
+        
+        {% for group in option_groups %}
+        <fieldset>
+            <legend>{{ group.text }}</legend>
+            
+            {% for option in group.options %}
+            <label for="{{ option.keyword }}">
+                {{ option.text }}
+                {% if option.choices|length == 2 and option.choices[0].value in ['True', 'False', 'true', 'false', 'Yes', 'No', 'On', 'Off'] %}
+                    {# Boolean option - render as checkbox #}
+                    <select id="{{ option.keyword }}" name="{{ option.keyword }}">
+                        {% for choice in option.choices %}
+                        <option value="{{ choice.value }}" 
+                                {% if choice.value == option.default %}selected{% endif %}>
+                            {{ choice.text }}
+                        </option>
+                        {% endfor %}
+                    </select>
+                {% else %}
+                    {# Regular select #}
+                    <select id="{{ option.keyword }}" name="{{ option.keyword }}">
+                        {% for choice in option.choices %}
+                        <option value="{{ choice.value }}"
+                                {% if choice.value == option.default %}selected{% endif %}>
+                            {{ choice.text }}
+                        </option>
+                        {% endfor %}
+                    </select>
+                {% endif %}
+            </label>
+            {% endfor %}
+        </fieldset>
+        {% endfor %}
+        
+        <fieldset>
+            <legend>Copies</legend>
+            <label for="copies">
+                Number of Copies
+                <input type="number" id="copies" name="copies" value="1" min="1" max="999">
+            </label>
+        </fieldset>
+        
+        <div class="grid">
+            <button type="submit">Print</button>
+            <a href="{{ url_for('print.index') }}" role="button" class="secondary">Cancel</a>
+        </div>
+    </form>
+</article>
+{% endblock %}

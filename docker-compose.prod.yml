@@ -1,0 +1,53 @@
+services:
+  # Database
+  db:
+    image: postgres:17-alpine
+    restart: always
+    environment:
+      POSTGRES_USER: ippweb
+      POSTGRES_PASSWORD: changeme
+      POSTGRES_DB: ippweb
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ippweb"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Bundled CUPS Server
+  cups:
+    image: ydkn/cups:latest
+    restart: always
+    environment:
+      ADMIN_PASSWORD: admin
+    # Mount local config/printers if you have them, otherwise it starts empty
+    volumes:
+      - cups_config:/etc/cups
+      - cups_spool:/var/spool/cups
+
+  # Main Application
+  web:
+    build: .
+    restart: always
+    ports:
+      - "5000:5000"
+    environment:
+      FLASK_CONFIG: production
+      DATABASE_URL: postgresql://ippweb:changeme@db:5432/ippweb      
+      OIDC_ISSUER: http://keycloak:8080/realms/ippweb
+      OIDC_CLIENT_ID: ippweb-client
+      OIDC_CLIENT_SECRET: ippweb-secret
+      FLASK_SECRET_KEY: changeme_production_secret
+      CUPS_SERVER: cups
+      CUPS_PORT: 631
+    depends_on:
+      db:
+        condition: service_healthy
+    tmpfs:
+      - /app/uploads
+
+volumes:
+  postgres_data:
+  cups_config:
+  cups_spool:

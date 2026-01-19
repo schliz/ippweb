@@ -1,0 +1,254 @@
+{% extends "base.html" %}
+
+{% block title %}Job {{ job.id }} Status - ippweb{% endblock %}
+
+{% block content %}
+<article>
+    <header>
+        <h1>Print Job {{ job.id }}</h1>
+    </header>
+
+    <section class="job-status" data-job-id="{{ job.id }}">
+        <dl>
+            <dt>File Name</dt>
+            <dd id="job-filename">{{ job.filename }}</dd>
+            
+            <dt>Printer</dt>
+            <dd id="job-printer">{{ job.printer_name }}</dd>
+            
+            <dt>Status</dt>
+            <dd>
+                <span id="job-state" class="status status-{{ job.status.value }}">
+                    {{ job.status.value|title }}
+                </span>
+                <span id="job-message" class="status-message">
+                    {% if job.status_message %}({{ job.status_message }}){% endif %}
+                </span>
+            </dd>
+            
+            <dt>Pages</dt>
+            <dd>
+                <span id="job-pages">{{ job.pages_printed }}</span> / {{ job.page_count }}
+                <span class="color-mode color-mode-{{ job.color_mode.value }}">
+                    ({{ job.color_mode.value|upper }})
+                </span>
+            </dd>
+            
+            <dt>Submitted</dt>
+            <dd>{{ job.created_at.strftime('%Y-%m-%d %H:%M:%S') if job.created_at else 'Unknown' }}</dd>
+            
+            {% if job.completed_at %}
+            <dt>Completed</dt>
+            <dd>{{ job.completed_at.strftime('%Y-%m-%d %H:%M:%S') }}</dd>
+            {% endif %}
+        </dl>
+        
+        <div id="connection-status" class="connection-status" style="display: none;">
+            <span class="warning">
+                <span id="connection-message">Connection to server lost.</span>
+                <span id="reconnect-countdown"></span>
+            </span>
+        </div>
+        
+        <div id="cups-error" class="cups-error" {% if not job.cups_unreachable %}style="display: none;"{% endif %}>
+            <span class="warning">Unable to reach printer - showing last known status</span>
+        </div>
+        
+        {% if not job.is_terminal() %}
+        <p class="polling-indicator" id="update-indicator">Receiving live updates...</p>
+        
+        <form method="POST" action="{{ url_for('print.cancel_job', job_id=job.id) }}" id="cancel-form">
+            <button type="submit" class="danger" {% if job.is_at_printer() %}disabled{% endif %}>
+                {% if job.is_at_printer() %}
+                    Cannot Cancel (At Printer)
+                {% else %}
+                    Cancel Job
+                {% endif %}
+            </button>
+        </form>
+        {% else %}
+        <div class="job-result">
+            {% if job.status.value == 'completed' %}
+                <p>Job completed successfully. {{ job.pages_printed }} page(s) printed.</p>
+            {% elif job.status.value == 'canceled' %}
+                <p>Job was canceled. {{ job.pages_printed }} page(s) may have printed.</p>
+            {% elif job.status.value == 'timed_out' %}
+                <p>Job timed out. {{ job.pages_printed }} page(s) may have printed.</p>
+            {% else %}
+                <p>Job did not complete successfully ({{ job.status.value }}).
+                {{ job.pages_printed }} page(s) may have printed.</p>
+            {% endif %}
+        </div>
+        {% endif %}
+    </section>
+</article>
+
+<div class="nav-links">
+    <a href="{{ url_for('jobs.jobs_dashboard') }}" role="button" class="secondary">View All Jobs</a>
+    <a href="{{ url_for('print.index') }}" role="button" class="outline">Back to Printers</a>
+</div>
+{% endblock %}
+
+{% block scripts %}
+{% if not job.is_terminal() %}
+<script>
+(function() {
+    const jobId = "{{ job.id }}";
+    let eventSource = null;
+    let reconnectAttempts = 0;
+    const maxReconnectAttempts = 10;
+    let countdownInterval = null;
+    
+    function showConnectionStatus(message, countdown) {
+        const statusEl = document.getElementById('connection-status');
+        const messageEl = document.getElementById('connection-message');
+        const countdownEl = document.getElementById('reconnect-countdown');
+        
+        statusEl.style.display = 'block';
+        messageEl.textContent = message;
+        
+        // Clear any existing countdown
+        if (countdownInterval) {
+            clearInterval(countdownInterval);
+            countdownInterval = null;
+        }
+        
+        if (countdown > 0) {
+            let remaining = Math.ceil(countdown / 1000);
+            countdownEl.textContent = ` Reconnecting in ${remaining}s...`;
+            countdownInterval = setInterval(function() {
+                remaining--;
+                if (remaining > 0) {
+                    countdownEl.textContent = ` Reconnecting in ${remaining}s...`;
+                } else {
+                    countdownEl.textContent = ' Reconnecting...';
+                    clearInterval(countdownInterval);
+                    countdownInterval = null;
+                }
+            }, 1000);
+        } else {
+            countdownEl.textContent = '';
+        }
+    }
+    
+    function hideConnectionStatus() {
+        document.getElementById('connection-status').style.display = 'none';
+        if (countdownInterval) {
+            clearInterval(countdownInterval);
+            countdownInterval = null;
+        }
+    }
+    
+    function connect() {
+        if (eventSource) {
+            eventSource.close();
+        }
+        
+        eventSource = new EventSource('/api/jobs/stream');
+        
+        eventSource.addEventListener('connected', function(event) {
+            console.log('SSE connected');
+            reconnectAttempts = 0;
+            hideConnectionStatus();
+            
+            // Check if server reported an error
+            const data = JSON.parse(event.data);
+            if (data.error) {
+                console.warn('Server reported error:', data.error);
+            }
+        });
+        
+        eventSource.addEventListener('job-update', function(event) {
+            const data = JSON.parse(event.data);
+            
+            // Only update if this is our job
+            if (data.id !== jobId) return;
+            
+            updateJobUI(data);
+        });
+        
+        eventSource.onerror = function(event) {
+            console.error('SSE error:', event);
+            eventSource.close();
+            
+            // Check if this might be an auth error (401/403)
+            // EventSource doesn't expose status codes, so we check readyState
+            if (eventSource.readyState === EventSource.CLOSED) {
+                // Could be auth failure - try to detect by attempting a fetch
+                fetch('/api/jobs/stats', { credentials: 'same-origin' })
+                    .then(response => {
+                        if (response.status === 401 || response.status === 403) {
+                            // Auth error - redirect to login
+                            showConnectionStatus('Session expired. Redirecting to login...', 0);
+                            setTimeout(function() {
+                                window.location.href = '/login?next=' + encodeURIComponent(window.location.pathname);
+                            }, 1500);
+                            return;
+                        }
+                        // Not an auth error, proceed with reconnection
+                        scheduleReconnect();
+                    })
+                    .catch(function() {
+                        // Network error, proceed with reconnection
+                        scheduleReconnect();
+                    });
+            } else {
+                scheduleReconnect();
+            }
+        };
+    }
+    
+    function scheduleReconnect() {
+        if (reconnectAttempts < maxReconnectAttempts) {
+            reconnectAttempts++;
+            const delay = Math.min(1000 * Math.pow(2, reconnectAttempts), 30000);
+            console.log('Reconnecting in ' + delay + 'ms (attempt ' + reconnectAttempts + '/' + maxReconnectAttempts + ')');
+            showConnectionStatus('Connection lost.', delay);
+            setTimeout(connect, delay);
+        } else {
+            showConnectionStatus('Unable to connect. Please refresh the page.', 0);
+        }
+    }
+    
+    function updateJobUI(data) {
+        // Update status
+        const stateEl = document.getElementById('job-state');
+        stateEl.textContent = data.status.charAt(0).toUpperCase() + data.status.slice(1);
+        stateEl.className = 'status status-' + data.status;
+        
+        // Update message
+        const messageEl = document.getElementById('job-message');
+        messageEl.textContent = data.status_message ? '(' + data.status_message + ')' : '';
+        
+        // Update pages
+        document.getElementById('job-pages').textContent = data.pages_printed;
+        
+        // Update CUPS error indicator
+        const cupsError = document.getElementById('cups-error');
+        cupsError.style.display = data.cups_unreachable ? 'block' : 'none';
+        
+        // Check if job finished
+        const terminalStates = ['completed', 'canceled', 'aborted', 'timed_out'];
+        if (terminalStates.includes(data.status)) {
+            eventSource.close();
+            // Reload to show final state
+            location.reload();
+        }
+    }
+    
+    // Start connection
+    connect();
+    
+    // Clean up on page unload
+    window.addEventListener('beforeunload', function() {
+        if (eventSource) {
+            eventSource.close();
+        }
+        if (countdownInterval) {
+            clearInterval(countdownInterval);
+        }
+    });
+})();
+</script>
+{% endif %}
+{% endblock %}

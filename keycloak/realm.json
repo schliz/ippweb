@@ -1,0 +1,82 @@
+{
+  "realm": "ippweb",
+  "enabled": true,
+  "sslRequired": "external",
+  "registrationAllowed": false,
+  "loginWithEmailAllowed": true,
+  "duplicateEmailsAllowed": false,
+  "resetPasswordAllowed": false,
+  "editUsernameAllowed": false,
+  "bruteForceProtected": true,
+  "clients": [
+    {
+      "clientId": "ippweb-client",
+      "name": "IPP Web Print Client",
+      "description": "Web-based printing service client",
+      "enabled": true,
+      "clientAuthenticatorType": "client-secret",
+      "secret": "ippweb-secret",
+      "redirectUris": [
+        "http://localhost:5000/*"
+      ],
+      "webOrigins": [
+        "http://localhost:5000"
+      ],
+      "standardFlowEnabled": true,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": false,
+      "publicClient": false,
+      "frontchannelLogout": true,
+      "protocol": "openid-connect",
+      "attributes": {
+        "post.logout.redirect.uris": "http://localhost:5000/*",
+        "pkce.code.challenge.method": "S256"
+      },
+      "defaultClientScopes": [
+        "web-origins",
+        "acr",
+        "profile",
+        "roles",
+        "email"
+      ],
+      "optionalClientScopes": [
+        "address",
+        "phone",
+        "offline_access",
+        "microprofile-jwt"
+      ]
+    }
+  ],
+  "users": [
+    {
+      "username": "printuser",
+      "enabled": true,
+      "emailVerified": true,
+      "firstName": "Print",
+      "lastName": "User",
+      "email": "printuser@example.com",
+      "credentials": [
+        {
+          "type": "password",
+          "value": "printpass",
+          "temporary": false
+        }
+      ]
+    }
+  ],
+  "defaultDefaultClientScopes": [
+    "role_list",
+    "profile",
+    "email",
+    "roles",
+    "web-origins",
+    "acr"
+  ],
+  "defaultOptionalClientScopes": [
+    "offline_access",
+    "address",
+    "phone",
+    "microprofile-jwt"
+  ]
+}

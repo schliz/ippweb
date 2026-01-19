@@ -1,0 +1,433 @@
+{% extends "base.html" %}
+
+{% block title %}My Print Jobs - ippweb{% endblock %}
+
+{% block content %}
+<h1>My Print Jobs</h1>
+
+<!-- Statistics Section -->
+<section id="stats-section">
+    <div class="stats-grid">
+        <article class="stat-card">
+            <span class="stat-value" id="stat-total-jobs">-</span>
+            <span class="stat-label">Total Jobs</span>
+        </article>
+        <article class="stat-card">
+            <span class="stat-value" id="stat-pending-jobs">-</span>
+            <span class="stat-label">Pending</span>
+        </article>
+        <article class="stat-card stat-rgb">
+            <span class="stat-value" id="stat-rgb-pages">-</span>
+            <span class="stat-label">Color Pages</span>
+        </article>
+        <article class="stat-card stat-gray">
+            <span class="stat-value" id="stat-gray-pages">-</span>
+            <span class="stat-label">Grayscale Pages</span>
+        </article>
+        <article class="stat-card">
+            <span class="stat-value" id="stat-total-pages">-</span>
+            <span class="stat-label">Total Pages</span>
+        </article>
+    </div>
+</section>
+
+<!-- Pending Jobs Section -->
+<article class="pending-jobs-section" id="pending-section" style="display: none;">
+    <header>
+        <h2>Active Jobs</h2>
+    </header>
+    <div id="connection-status" class="connection-status" style="display: none;">
+        <span class="warning">
+            <span id="connection-message">Connection to server lost.</span>
+            <span id="reconnect-countdown"></span>
+        </span>
+    </div>
+    <table id="pending-jobs-table" class="striped">
+        <thead>
+            <tr>
+                <th>ID</th>
+                <th>File</th>
+                <th>Printer</th>
+                <th>Pages</th>
+                <th>Status</th>
+                <th>Actions</th>
+            </tr>
+        </thead>
+        <tbody id="pending-jobs-body">
+        </tbody>
+    </table>
+</article>
+
+<!-- Filters Section -->
+<article class="filters-section">
+    <header>
+        <h2>Job History</h2>
+    </header>
+    <form id="filters-form" class="filters-form">
+        <label>
+            Status
+            <select name="status" id="filter-status">
+                <option value="all">All</option>
+                <option value="completed">Completed</option>
+                <option value="failed">Failed</option>
+                <option value="pending">Pending</option>
+            </select>
+        </label>
+        <label>
+            Color Mode
+            <select name="color_mode" id="filter-color">
+                <option value="all">All</option>
+                <option value="rgb">Color (RGB)</option>
+                <option value="gray">Grayscale</option>
+            </select>
+        </label>
+        <label>
+            From
+            <input type="date" name="start_date" id="filter-start">
+        </label>
+        <label>
+            To
+            <input type="date" name="end_date" id="filter-end">
+        </label>
+        <button type="submit">Filter</button>
+        <button type="button" id="clear-filters" class="secondary">Clear</button>
+    </form>
+    
+    <table id="jobs-table" class="striped">
+        <thead>
+            <tr>
+                <th>Date</th>
+                <th>File</th>
+                <th>Printer</th>
+                <th>Pages</th>
+                <th>Color</th>
+                <th>Status</th>
+            </tr>
+        </thead>
+        <tbody id="jobs-body">
+            <tr><td colspan="6" class="loading">Loading jobs...</td></tr>
+        </tbody>
+    </table>
+    
+    <div class="pagination" id="pagination">
+        <button id="prev-page" disabled class="outline">Previous</button>
+        <span id="page-info">Page 1</span>
+        <button id="next-page" disabled class="outline">Next</button>
+    </div>
+</article>
+
+<div class="nav-links">
+    <a href="{{ url_for('print.index') }}" role="button" class="outline">Back to Printers</a>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+(function() {
+    // State
+    let currentPage = 1;
+    const perPage = 20;
+    let totalPages = 1;
+    let eventSource = null;
+    let reconnectAttempts = 0;
+    const maxReconnectAttempts = 10;
+    let countdownInterval = null;
+    const pendingJobs = new Map();
+    
+    // DOM elements
+    const statsSection = document.getElementById('stats-section');
+    const pendingSection = document.getElementById('pending-section');
+    const pendingBody = document.getElementById('pending-jobs-body');
+    const jobsBody = document.getElementById('jobs-body');
+    const pagination = document.getElementById('pagination');
+    const prevBtn = document.getElementById('prev-page');
+    const nextBtn = document.getElementById('next-page');
+    const pageInfo = document.getElementById('page-info');
+    const filtersForm = document.getElementById('filters-form');
+    
+    // Connection status helpers
+    function showConnectionStatus(message, countdown) {
+        const statusEl = document.getElementById('connection-status');
+        const messageEl = document.getElementById('connection-message');
+        const countdownEl = document.getElementById('reconnect-countdown');
+        
+        statusEl.style.display = 'block';
+        messageEl.textContent = message;
+        
+        // Clear any existing countdown
+        if (countdownInterval) {
+            clearInterval(countdownInterval);
+            countdownInterval = null;
+        }
+        
+        if (countdown > 0) {
+            let remaining = Math.ceil(countdown / 1000);
+            countdownEl.textContent = ` Reconnecting in ${remaining}s...`;
+            countdownInterval = setInterval(function() {
+                remaining--;
+                if (remaining > 0) {
+                    countdownEl.textContent = ` Reconnecting in ${remaining}s...`;
+                } else {
+                    countdownEl.textContent = ' Reconnecting...';
+                    clearInterval(countdownInterval);
+                    countdownInterval = null;
+                }
+            }, 1000);
+        } else {
+            countdownEl.textContent = '';
+        }
+    }
+    
+    function hideConnectionStatus() {
+        document.getElementById('connection-status').style.display = 'none';
+        if (countdownInterval) {
+            clearInterval(countdownInterval);
+            countdownInterval = null;
+        }
+    }
+    
+    // Load stats
+    function loadStats() {
+        fetch('/api/jobs/stats')
+            .then(response => response.json())
+            .then(data => {
+                document.getElementById('stat-total-jobs').textContent = data.total_jobs;
+                document.getElementById('stat-pending-jobs').textContent = data.pending_jobs;
+                document.getElementById('stat-rgb-pages').textContent = data.rgb_pages;
+                document.getElementById('stat-gray-pages').textContent = data.gray_pages;
+                document.getElementById('stat-total-pages').textContent = data.total_pages;
+            })
+            .catch(error => console.error('Error loading stats:', error));
+    }
+    
+    // Load jobs
+    function loadJobs() {
+        const params = new URLSearchParams();
+        params.set('page', currentPage);
+        params.set('per_page', perPage);
+        
+        const status = document.getElementById('filter-status').value;
+        if (status !== 'all') params.set('status', status);
+        
+        const colorMode = document.getElementById('filter-color').value;
+        if (colorMode !== 'all') params.set('color_mode', colorMode);
+        
+        const startDate = document.getElementById('filter-start').value;
+        if (startDate) params.set('start_date', startDate);
+        
+        const endDate = document.getElementById('filter-end').value;
+        if (endDate) params.set('end_date', endDate);
+        
+        fetch('/api/jobs?' + params.toString())
+            .then(response => response.json())
+            .then(data => {
+                renderJobs(data.jobs);
+                totalPages = data.pages;
+                updatePagination(data);
+            })
+            .catch(error => {
+                console.error('Error loading jobs:', error);
+                jobsBody.innerHTML = '<tr><td colspan="6" class="error">Error loading jobs</td></tr>';
+            });
+    }
+    
+    // Render jobs table
+    function renderJobs(jobs) {
+        if (jobs.length === 0) {
+            jobsBody.innerHTML = '<tr><td colspan="6" class="empty">No jobs found</td></tr>';
+            return;
+        }
+        
+        jobsBody.innerHTML = jobs.map(job => `
+            <tr>
+                <td data-label="Date">
+                    <a href="/job/${job.id}">${formatDate(job.created_at)}</a>
+                </td>
+                <td class="filename" data-label="File">${escapeHtml(job.filename)}</td>
+                <td data-label="Printer">${escapeHtml(job.printer_name)}</td>
+                <td data-label="Pages">${job.pages_printed} / ${job.page_count}</td>
+                <td data-label="Color">
+                    <span class="color-mode color-mode-${job.color_mode}">
+                        ${job.color_mode.toUpperCase()}
+                    </span>
+                </td>
+                <td data-label="Status">
+                    <span class="status status-${job.status}">
+                        ${job.status.charAt(0).toUpperCase() + job.status.slice(1)}
+                    </span>
+                </td>
+            </tr>
+        `).join('');
+    }
+    
+    // Update pagination
+    function updatePagination(data) {
+        prevBtn.disabled = !data.has_prev;
+        nextBtn.disabled = !data.has_next;
+        pageInfo.textContent = `Page ${data.page} of ${data.pages || 1}`;
+    }
+    
+    // Render pending jobs
+    function renderPendingJobs() {
+        if (pendingJobs.size === 0) {
+            pendingSection.style.display = 'none';
+            return;
+        }
+        
+        pendingSection.style.display = 'block';
+        pendingBody.innerHTML = Array.from(pendingJobs.values()).map(job => `
+            <tr id="pending-${job.id}">
+                <td data-label="ID"><a href="/job/${job.id}">${job.id}</a></td>
+                <td class="filename" data-label="File">${escapeHtml(job.filename)}</td>
+                <td data-label="Printer">${escapeHtml(job.printer_name)}</td>
+                <td data-label="Pages">${job.pages_printed} / ${job.page_count}</td>
+                <td data-label="Status">
+                    <span class="status status-${job.status}">
+                        ${job.status.charAt(0).toUpperCase() + job.status.slice(1)}
+                    </span>
+                    ${job.cups_unreachable ? '<span class="warning">(Printer unreachable)</span>' : ''}
+                </td>
+                <td data-label="Actions">
+                    <a href="/job/${job.id}">View</a>
+                </td>
+            </tr>
+        `).join('');
+    }
+    
+    // Connect to SSE
+    function connectSSE() {
+        if (eventSource) {
+            eventSource.close();
+        }
+        
+        eventSource = new EventSource('/api/jobs/stream');
+        
+        eventSource.addEventListener('connected', function(event) {
+            console.log('SSE connected');
+            reconnectAttempts = 0;
+            hideConnectionStatus();
+            
+            const data = JSON.parse(event.data);
+            
+            if (data.error) {
+                console.warn('Server reported error:', data.error);
+            }
+            
+            pendingJobs.clear();
+            if (data.active_jobs) {
+                data.active_jobs.forEach(job => pendingJobs.set(job.id, job));
+            }
+            renderPendingJobs();
+        });
+        
+        eventSource.addEventListener('job-update', function(event) {
+            const job = JSON.parse(event.data);
+            
+            const terminalStates = ['completed', 'canceled', 'aborted', 'timed_out'];
+            if (terminalStates.includes(job.status)) {
+                pendingJobs.delete(job.id);
+                // Reload stats and jobs when a job completes
+                loadStats();
+                loadJobs();
+            } else {
+                pendingJobs.set(job.id, job);
+            }
+            renderPendingJobs();
+        });
+        
+        eventSource.onerror = function(event) {
+            console.error('SSE error:', event);
+            eventSource.close();
+            
+            // Check if this might be an auth error (401/403)
+            if (eventSource.readyState === EventSource.CLOSED) {
+                fetch('/api/jobs/stats', { credentials: 'same-origin' })
+                    .then(response => {
+                        if (response.status === 401 || response.status === 403) {
+                            showConnectionStatus('Session expired. Redirecting to login...', 0);
+                            setTimeout(function() {
+                                window.location.reload();
+                            }, 1500);
+                            return;
+                        }
+                        scheduleReconnect();
+                    })
+                    .catch(() => scheduleReconnect());
+            } else {
+                scheduleReconnect();
+            }
+        };
+    }
+    
+    function scheduleReconnect() {
+        if (reconnectAttempts < maxReconnectAttempts) {
+            reconnectAttempts++;
+            const delay = Math.min(1000 * Math.pow(2, reconnectAttempts), 30000);
+            console.log('Reconnecting in ' + delay + 'ms (attempt ' + reconnectAttempts + '/' + maxReconnectAttempts + ')');
+            showConnectionStatus('Connection lost.', delay);
+            setTimeout(connectSSE, delay);
+        } else {
+            showConnectionStatus('Unable to connect. Please refresh the page.', 0);
+        }
+    }
+    
+    // Utility functions
+    function formatDate(isoString) {
+        if (!isoString) return 'Unknown';
+        const date = new Date(isoString);
+        return date.toLocaleString();
+    }
+    
+    function escapeHtml(text) {
+        const div = document.createElement('div');
+        div.textContent = text;
+        return div.innerHTML;
+    }
+    
+    // Event listeners
+    prevBtn.addEventListener('click', () => {
+        if (currentPage > 1) {
+            currentPage--;
+            loadJobs();
+        }
+    });
+    
+    nextBtn.addEventListener('click', () => {
+        if (currentPage < totalPages) {
+            currentPage++;
+            loadJobs();
+        }
+    });
+    
+    filtersForm.addEventListener('submit', (e) => {
+        e.preventDefault();
+        currentPage = 1;
+        loadJobs();
+    });
+    
+    document.getElementById('clear-filters').addEventListener('click', () => {
+        document.getElementById('filter-status').value = 'all';
+        document.getElementById('filter-color').value = 'all';
+        document.getElementById('filter-start').value = '';
+        document.getElementById('filter-end').value = '';
+        currentPage = 1;
+        loadJobs();
+    });
+    
+    // Cleanup on page unload
+    window.addEventListener('beforeunload', () => {
+        if (eventSource) {
+            eventSource.close();
+        }
+        if (countdownInterval) {
+            clearInterval(countdownInterval);
+        }
+    });
+    
+    // Initial load
+    loadStats();
+    loadJobs();
+    connectSSE();
+})();
+</script>
+{% endblock %}

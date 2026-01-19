@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}ippweb{% endblock %}</title>
+    <!-- Pico.css -->
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.min.css">
+    <!-- Google Fonts: Nunito -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Nunito:wght@400;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+    {% block head %}{% endblock %}
+</head>
+<body>
+    <header class="container">
+        <nav>
+            <ul>
+                <li>
+                    <a href="{{ url_for('print.index') }}" class="contrast"><strong>ippweb</strong></a>
+                </li>
+            </ul>
+            <ul>
+                {% if user %}
+                    <li><a href="{{ url_for('jobs.jobs_dashboard') }}" class="secondary">My Jobs</a></li>
+                    <li><small>{{ user.name or user.preferred_username or user.email }}</small></li>
+                    <li><a href="{{ url_for('auth.logout') }}" role="button" class="outline contrast">Logout</a></li>
+                {% endif %}
+            </ul>
+        </nav>
+    </header>
+    
+    <main class="container">
+        {% with messages = get_flashed_messages(with_categories=true) %}
+            {% if messages %}
+                <section class="messages">
+                    {% for category, message in messages %}
+                        <div class="message message-{{ category }}">{{ message }}</div>
+                    {% endfor %}
+                </section>
+            {% endif %}
+        {% endwith %}
+        
+        {% block content %}{% endblock %}
+    </main>
+    
+    <footer>
+        <p>ippweb - Web Printing Service</p>
+    </footer>
+    
+    {% block scripts %}{% endblock %}
+</body>
+</html>

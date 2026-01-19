@@ -1,0 +1,56 @@
+{% extends "base.html" %}
+
+{% block title %}Printers - ippweb{% endblock %}
+
+{% block content %}
+<article>
+    <header>
+        <h1>Available Printers</h1>
+    </header>
+
+{% if printers %}
+    <table class="striped">
+        <thead>
+            <tr>
+                <th>Printer</th>
+                <th>Model</th>
+                <th>Location</th>
+                <th>Status</th>
+                <th>Action</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for printer in printers %}
+            <tr>
+                <td data-label="Printer">
+                    <strong>{{ printer.name }}</strong>
+                    {% if printer.info %}
+                        <br><small>{{ printer.info }}</small>
+                    {% endif %}
+                </td>
+                <td data-label="Model">{{ printer.make_and_model or 'Unknown' }}</td>
+                <td data-label="Location">{{ printer.location or '-' }}</td>
+                <td data-label="Status">
+                    <span class="status status-{{ 'available' if printer.is_available else 'unavailable' }}">
+                        {{ printer.state_text }}
+                    </span>
+                    {% if not printer.is_accepting_jobs %}
+                        <br><small>Not accepting jobs</small>
+                    {% endif %}
+                </td>
+                <td data-label="Action">
+                    {% if printer.is_available %}
+                        <a href="{{ url_for('print.print_form', printer_name=printer.name) }}" role="button">Print</a>
+                    {% else %}
+                        <button disabled>Unavailable</button>
+                    {% endif %}
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+{% else %}
+    <p>No printers available. Make sure CUPS is running and has printers configured.</p>
+{% endif %}
+</article>
+{% endblock %}
